@@ -1,0 +1,7 @@
+{
+  "name": "LiveDirectoryTree",
+  "tree": {
+    "$className": "Plugin",
+    "$path": "LiveDirectoryTree.lua"
+  }
+}

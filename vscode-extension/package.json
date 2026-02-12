@@ -1,0 +1,142 @@
+{
+  "name": "roblox-live-directory-tree",
+  "displayName": "Roblox Live Directory Tree",
+  "description": "Live view of your Roblox project structure synced from Studio",
+  "version": "1.0.0",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "roblox-directory-tree",
+          "title": "Roblox Directory",
+          "icon": "$(file-directory)"
+        }
+      ]
+    },
+    "views": {
+      "roblox-directory-tree": [
+        {
+          "id": "robloxDirectoryTree",
+          "name": "Project Structure",
+          "icon": "$(list-tree)",
+          "contextualTitle": "Roblox Directory Tree"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "robloxDirectoryTree.startServer",
+        "title": "Start Server",
+        "icon": "$(play)"
+      },
+      {
+        "command": "robloxDirectoryTree.stopServer",
+        "title": "Stop Server",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "robloxDirectoryTree.refresh",
+        "title": "Refresh Tree",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "robloxDirectoryTree.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "robloxDirectoryTree.copyTree",
+        "title": "Copy Entire Tree",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "robloxDirectoryTree.setServerUrl",
+        "title": "Set Server URL"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "robloxDirectoryTree.startServer",
+          "when": "view == robloxDirectoryTree && !robloxDirectoryTree.serverRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "robloxDirectoryTree.stopServer",
+          "when": "view == robloxDirectoryTree && robloxDirectoryTree.serverRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "robloxDirectoryTree.refresh",
+          "when": "view == robloxDirectoryTree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "robloxDirectoryTree.copyTree",
+          "when": "view == robloxDirectoryTree",
+          "group": "navigation@3"
+        },
+        {
+          "command": "robloxDirectoryTree.setServerUrl",
+          "when": "view == robloxDirectoryTree"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "robloxDirectoryTree.copyPath",
+          "when": "view == robloxDirectoryTree"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Roblox Live Directory Tree",
+      "properties": {
+        "robloxDirectoryTree.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:21326",
+          "description": "URL of the Live Directory Tree server"
+        },
+        "robloxDirectoryTree.serverPort": {
+          "type": "number",
+          "default": 21326,
+          "description": "Port for the built-in server"
+        },
+        "robloxDirectoryTree.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh the tree"
+        },
+        "robloxDirectoryTree.refreshInterval": {
+          "type": "number",
+          "default": 3000,
+          "description": "Auto-refresh interval in milliseconds"
+        },
+        "robloxDirectoryTree.autoStartServer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start the server when VS Code opens"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "eslint": "^8.28.0"
+  }
+}
