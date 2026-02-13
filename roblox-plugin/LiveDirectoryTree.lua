@@ -4,7 +4,7 @@
 	
 	Works with the LiveDirectoryTree server and VS Code extension
 	
-	Version: 1.0.0
+	Version: 2.0.0 - Now with service selection!
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -18,7 +18,7 @@ local toolbar = Plugin:CreateToolbar("Live Directory Tree")
 local connectButton = toolbar:CreateButton(
 	"Connect",
 	"Connect to Live Directory Tree server",
-	"rbxassetid://6031091004"
+	"rbxassetid://111621702308897"
 )
 
 local syncButton = toolbar:CreateButton(
@@ -27,23 +27,32 @@ local syncButton = toolbar:CreateButton(
 	"rbxassetid://6031082533"
 )
 
+-- All available services that can be synced
+local ALL_SERVICES = {
+	{ name = "ReplicatedStorage", service = game:GetService("ReplicatedStorage"), default = true },
+	{ name = "ServerScriptService", service = game:GetService("ServerScriptService"), default = true },
+	{ name = "ServerStorage", service = game:GetService("ServerStorage"), default = true },
+	{ name = "StarterGui", service = game:GetService("StarterGui"), default = true },
+	{ name = "StarterPlayer", service = game:GetService("StarterPlayer"), default = true },
+	{ name = "StarterPack", service = game:GetService("StarterPack"), default = true },
+	{ name = "Workspace", service = game:GetService("Workspace"), default = false },
+	{ name = "Lighting", service = game:GetService("Lighting"), default = false },
+	{ name = "SoundService", service = game:GetService("SoundService"), default = false },
+	{ name = "ReplicatedFirst", service = game:GetService("ReplicatedFirst"), default = false },
+	{ name = "Chat", service = game:GetService("Chat"), default = false },
+	{ name = "LocalizationService", service = game:GetService("LocalizationService"), default = false },
+	{ name = "TestService", service = game:GetService("TestService"), default = false },
+}
+
 -- Configuration
 local CONFIG = {
-	SERVER_URL = "http://localhost:21326", -- Default port (ROBLOX in numbers: 21326)
-	SYNC_INTERVAL = 3, -- Seconds between auto-syncs
+	SERVER_URL = "http://localhost:21326",
+	SYNC_INTERVAL = 3,
 	AUTO_SYNC = true,
-	
-	-- Containers to scan
-	SCAN_CONTAINERS = {
-		game:GetService("ReplicatedStorage"),
-		game:GetService("ServerScriptService"),
-		game:GetService("ServerStorage"),
-		game:GetService("StarterGui"),
-		game:GetService("StarterPlayer"),
-		game:GetService("StarterPack"),
-		-- game:GetService("Workspace"), -- Usually too large
-	},
-	
+
+	-- This will be populated by checkboxes
+	ENABLED_SERVICES = {},
+
 	-- Classes to skip
 	SKIP_CLASSES = {
 		"Terrain", "Camera", "Attachment", "Weld", "WeldConstraint",
@@ -51,21 +60,27 @@ local CONFIG = {
 		"SurfaceLight", "Beam", "Trail", "Texture", "Decal",
 		"SpecialMesh", "BlockMesh", "CylinderMesh",
 	},
-	
+
 	-- Don't recurse into these
 	SHALLOW_CLASSES = {
 		"Model", "Part", "MeshPart", "UnionOperation", "BasePart",
 		"Accessory", "Humanoid",
 	},
-	
+
 	USE_FILTERS = true,
 }
+
+-- Initialize enabled services from defaults
+for _, svc in ipairs(ALL_SERVICES) do
+	CONFIG.ENABLED_SERVICES[svc.name] = svc.default
+end
 
 -- State
 local isConnected = false
 local lastTreeHash = ""
 local changeConnections = {}
 local syncLoop = nil
+local serviceCheckboxes = {}
 
 -- Class indicators for the tree
 local CLASS_ICONS = {
@@ -103,10 +118,10 @@ local widgetInfo = DockWidgetPluginGuiInfo.new(
 	Enum.InitialDockState.Float,
 	false,
 	false,
-	300,
-	400,
-	250,
-	300
+	320,
+	550,
+	280,
+	400
 )
 
 local widget = Plugin:CreateDockWidgetPluginGui("LiveDirectoryTreeWidget", widgetInfo)
@@ -119,19 +134,28 @@ local function createUI()
 	mainFrame.BackgroundColor3 = Color3.fromRGB(46, 46, 46)
 	mainFrame.BorderSizePixel = 0
 	mainFrame.Parent = widget
-	
+
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Size = UDim2.new(1, 0, 1, 0)
+	scrollFrame.BackgroundTransparency = 1
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 6
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 800)
+	scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scrollFrame.Parent = mainFrame
+
 	local padding = Instance.new("UIPadding")
 	padding.PaddingTop = UDim.new(0, 10)
 	padding.PaddingBottom = UDim.new(0, 10)
 	padding.PaddingLeft = UDim.new(0, 10)
 	padding.PaddingRight = UDim.new(0, 10)
-	padding.Parent = mainFrame
-	
+	padding.Parent = scrollFrame
+
 	local layout = Instance.new("UIListLayout")
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 8)
-	layout.Parent = mainFrame
-	
+	layout.Padding = UDim.new(0, 6)
+	layout.Parent = scrollFrame
+
 	-- Title
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, 0, 0, 25)
@@ -141,31 +165,31 @@ local function createUI()
 	title.TextSize = 16
 	title.Font = Enum.Font.GothamBold
 	title.LayoutOrder = 1
-	title.Parent = mainFrame
-	
+	title.Parent = scrollFrame
+
 	-- Status indicator
 	local statusFrame = Instance.new("Frame")
 	statusFrame.Size = UDim2.new(1, 0, 0, 30)
 	statusFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 	statusFrame.BorderSizePixel = 0
 	statusFrame.LayoutOrder = 2
-	statusFrame.Parent = mainFrame
-	
+	statusFrame.Parent = scrollFrame
+
 	local statusCorner = Instance.new("UICorner")
 	statusCorner.CornerRadius = UDim.new(0, 6)
 	statusCorner.Parent = statusFrame
-	
+
 	local statusDot = Instance.new("Frame")
 	statusDot.Size = UDim2.new(0, 12, 0, 12)
 	statusDot.Position = UDim2.new(0, 10, 0.5, -6)
 	statusDot.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 	statusDot.BorderSizePixel = 0
 	statusDot.Parent = statusFrame
-	
+
 	local statusDotCorner = Instance.new("UICorner")
 	statusDotCorner.CornerRadius = UDim.new(1, 0)
 	statusDotCorner.Parent = statusDot
-	
+
 	local statusLabel = Instance.new("TextLabel")
 	statusLabel.Size = UDim2.new(1, -35, 1, 0)
 	statusLabel.Position = UDim2.new(0, 30, 0, 0)
@@ -176,7 +200,7 @@ local function createUI()
 	statusLabel.Font = Enum.Font.Gotham
 	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 	statusLabel.Parent = statusFrame
-	
+
 	-- Server URL input
 	local urlLabel = Instance.new("TextLabel")
 	urlLabel.Size = UDim2.new(1, 0, 0, 20)
@@ -187,8 +211,8 @@ local function createUI()
 	urlLabel.Font = Enum.Font.Gotham
 	urlLabel.TextXAlignment = Enum.TextXAlignment.Left
 	urlLabel.LayoutOrder = 3
-	urlLabel.Parent = mainFrame
-	
+	urlLabel.Parent = scrollFrame
+
 	local urlInput = Instance.new("TextBox")
 	urlInput.Size = UDim2.new(1, 0, 0, 30)
 	urlInput.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
@@ -200,21 +224,21 @@ local function createUI()
 	urlInput.Font = Enum.Font.Code
 	urlInput.ClearTextOnFocus = false
 	urlInput.LayoutOrder = 4
-	urlInput.Parent = mainFrame
-	
+	urlInput.Parent = scrollFrame
+
 	local urlCorner = Instance.new("UICorner")
 	urlCorner.CornerRadius = UDim.new(0, 4)
 	urlCorner.Parent = urlInput
-	
+
 	local urlPadding = Instance.new("UIPadding")
 	urlPadding.PaddingLeft = UDim.new(0, 8)
 	urlPadding.PaddingRight = UDim.new(0, 8)
 	urlPadding.Parent = urlInput
-	
+
 	-- Button helper
 	local function createButton(text, color, order)
 		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, 0, 0, 35)
+		btn.Size = UDim2.new(1, 0, 0, 32)
 		btn.BackgroundColor3 = color
 		btn.BorderSizePixel = 0
 		btn.Text = text
@@ -223,103 +247,286 @@ local function createUI()
 		btn.Font = Enum.Font.GothamSemibold
 		btn.LayoutOrder = order
 		btn.AutoButtonColor = true
-		btn.Parent = mainFrame
-		
+		btn.Parent = scrollFrame
+
 		local corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(0, 6)
 		corner.Parent = btn
-		
+
 		return btn
 	end
-	
+
 	-- Buttons
 	local connectBtn = createButton("🔌 Connect", Color3.fromRGB(0, 120, 215), 5)
 	local syncBtn = createButton("🔄 Sync Now", Color3.fromRGB(80, 160, 80), 6)
 	local disconnectBtn = createButton("⏹ Disconnect", Color3.fromRGB(180, 60, 60), 7)
-	
+
+	-- ========================================
+	-- SERVICES SELECTION SECTION
+	-- ========================================
+
+	local servicesLabel = Instance.new("TextLabel")
+	servicesLabel.Size = UDim2.new(1, 0, 0, 25)
+	servicesLabel.BackgroundTransparency = 1
+	servicesLabel.Text = "📁 Select Services to Sync:"
+	servicesLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	servicesLabel.TextSize = 13
+	servicesLabel.Font = Enum.Font.GothamBold
+	servicesLabel.TextXAlignment = Enum.TextXAlignment.Left
+	servicesLabel.LayoutOrder = 8
+	servicesLabel.Parent = scrollFrame
+
+	-- Select All / Deselect All buttons
+	local selectAllFrame = Instance.new("Frame")
+	selectAllFrame.Size = UDim2.new(1, 0, 0, 28)
+	selectAllFrame.BackgroundTransparency = 1
+	selectAllFrame.LayoutOrder = 9
+	selectAllFrame.Parent = scrollFrame
+
+	local selectAllBtn = Instance.new("TextButton")
+	selectAllBtn.Size = UDim2.new(0.48, 0, 1, 0)
+	selectAllBtn.Position = UDim2.new(0, 0, 0, 0)
+	selectAllBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	selectAllBtn.BorderSizePixel = 0
+	selectAllBtn.Text = "Select All"
+	selectAllBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+	selectAllBtn.TextSize = 11
+	selectAllBtn.Font = Enum.Font.Gotham
+	selectAllBtn.Parent = selectAllFrame
+
+	local selectAllCorner = Instance.new("UICorner")
+	selectAllCorner.CornerRadius = UDim.new(0, 4)
+	selectAllCorner.Parent = selectAllBtn
+
+	local deselectAllBtn = Instance.new("TextButton")
+	deselectAllBtn.Size = UDim2.new(0.48, 0, 1, 0)
+	deselectAllBtn.Position = UDim2.new(0.52, 0, 0, 0)
+	deselectAllBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	deselectAllBtn.BorderSizePixel = 0
+	deselectAllBtn.Text = "Deselect All"
+	deselectAllBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+	deselectAllBtn.TextSize = 11
+	deselectAllBtn.Font = Enum.Font.Gotham
+	deselectAllBtn.Parent = selectAllFrame
+
+	local deselectAllCorner = Instance.new("UICorner")
+	deselectAllCorner.CornerRadius = UDim.new(0, 4)
+	deselectAllCorner.Parent = deselectAllBtn
+
+	-- Create checkbox for each service
+	local function createServiceCheckbox(svc, order)
+		local frame = Instance.new("Frame")
+		frame.Size = UDim2.new(1, 0, 0, 26)
+		frame.BackgroundTransparency = 1
+		frame.LayoutOrder = order
+		frame.Parent = scrollFrame
+
+		local checkbox = Instance.new("TextButton")
+		checkbox.Size = UDim2.new(0, 22, 0, 22)
+		checkbox.Position = UDim2.new(0, 0, 0.5, -11)
+		checkbox.BackgroundColor3 = CONFIG.ENABLED_SERVICES[svc.name] and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+		checkbox.BorderSizePixel = 0
+		checkbox.Text = CONFIG.ENABLED_SERVICES[svc.name] and "✓" or ""
+		checkbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		checkbox.TextSize = 14
+		checkbox.Font = Enum.Font.GothamBold
+		checkbox.Parent = frame
+
+		local checkCorner = Instance.new("UICorner")
+		checkCorner.CornerRadius = UDim.new(0, 4)
+		checkCorner.Parent = checkbox
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -30, 1, 0)
+		label.Position = UDim2.new(0, 30, 0, 0)
+		label.BackgroundTransparency = 1
+		label.Text = svc.name
+		label.TextColor3 = Color3.fromRGB(200, 200, 200)
+		label.TextSize = 12
+		label.Font = Enum.Font.Gotham
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = frame
+
+		-- Toggle function
+		local function updateCheckbox()
+			local enabled = CONFIG.ENABLED_SERVICES[svc.name]
+			checkbox.BackgroundColor3 = enabled and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+			checkbox.Text = enabled and "✓" or ""
+		end
+
+		checkbox.MouseButton1Click:Connect(function()
+			CONFIG.ENABLED_SERVICES[svc.name] = not CONFIG.ENABLED_SERVICES[svc.name]
+			updateCheckbox()
+		end)
+
+		-- Store reference for select all/deselect all
+		serviceCheckboxes[svc.name] = {
+			checkbox = checkbox,
+			update = updateCheckbox
+		}
+
+		return frame
+	end
+
+	-- Create checkboxes for all services
+	for i, svc in ipairs(ALL_SERVICES) do
+		createServiceCheckbox(svc, 9 + i)
+	end
+
+	-- Select All / Deselect All handlers
+	selectAllBtn.MouseButton1Click:Connect(function()
+		for _, svc in ipairs(ALL_SERVICES) do
+			CONFIG.ENABLED_SERVICES[svc.name] = true
+			if serviceCheckboxes[svc.name] then
+				serviceCheckboxes[svc.name].update()
+			end
+		end
+	end)
+
+	deselectAllBtn.MouseButton1Click:Connect(function()
+		for _, svc in ipairs(ALL_SERVICES) do
+			CONFIG.ENABLED_SERVICES[svc.name] = false
+			if serviceCheckboxes[svc.name] then
+				serviceCheckboxes[svc.name].update()
+			end
+		end
+	end)
+
+	-- ========================================
+	-- AUTO-SYNC AND FILTERS
+	-- ========================================
+
+	local optionsLabel = Instance.new("TextLabel")
+	optionsLabel.Size = UDim2.new(1, 0, 0, 25)
+	optionsLabel.BackgroundTransparency = 1
+	optionsLabel.Text = "⚙️ Options:"
+	optionsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	optionsLabel.TextSize = 13
+	optionsLabel.Font = Enum.Font.GothamBold
+	optionsLabel.TextXAlignment = Enum.TextXAlignment.Left
+	optionsLabel.LayoutOrder = 50
+	optionsLabel.Parent = scrollFrame
+
 	-- Auto-sync toggle
 	local autoSyncFrame = Instance.new("Frame")
-	autoSyncFrame.Size = UDim2.new(1, 0, 0, 30)
+	autoSyncFrame.Size = UDim2.new(1, 0, 0, 26)
 	autoSyncFrame.BackgroundTransparency = 1
-	autoSyncFrame.LayoutOrder = 8
-	autoSyncFrame.Parent = mainFrame
-	
+	autoSyncFrame.LayoutOrder = 51
+	autoSyncFrame.Parent = scrollFrame
+
+	local autoSyncCheckbox = Instance.new("TextButton")
+	autoSyncCheckbox.Size = UDim2.new(0, 22, 0, 22)
+	autoSyncCheckbox.Position = UDim2.new(0, 0, 0.5, -11)
+	autoSyncCheckbox.BackgroundColor3 = CONFIG.AUTO_SYNC and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+	autoSyncCheckbox.BorderSizePixel = 0
+	autoSyncCheckbox.Text = CONFIG.AUTO_SYNC and "✓" or ""
+	autoSyncCheckbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	autoSyncCheckbox.TextSize = 14
+	autoSyncCheckbox.Font = Enum.Font.GothamBold
+	autoSyncCheckbox.Parent = autoSyncFrame
+
+	local autoSyncCorner = Instance.new("UICorner")
+	autoSyncCorner.CornerRadius = UDim.new(0, 4)
+	autoSyncCorner.Parent = autoSyncCheckbox
+
 	local autoSyncLabel = Instance.new("TextLabel")
-	autoSyncLabel.Size = UDim2.new(0.7, 0, 1, 0)
+	autoSyncLabel.Size = UDim2.new(1, -30, 1, 0)
+	autoSyncLabel.Position = UDim2.new(0, 30, 0, 0)
 	autoSyncLabel.BackgroundTransparency = 1
 	autoSyncLabel.Text = "Auto-sync enabled"
-	autoSyncLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+	autoSyncLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 	autoSyncLabel.TextSize = 12
 	autoSyncLabel.Font = Enum.Font.Gotham
 	autoSyncLabel.TextXAlignment = Enum.TextXAlignment.Left
 	autoSyncLabel.Parent = autoSyncFrame
-	
-	local autoSyncToggle = Instance.new("TextButton")
-	autoSyncToggle.Size = UDim2.new(0, 50, 0, 24)
-	autoSyncToggle.Position = UDim2.new(1, -50, 0.5, -12)
-	autoSyncToggle.BackgroundColor3 = CONFIG.AUTO_SYNC and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(100, 100, 100)
-	autoSyncToggle.BorderSizePixel = 0
-	autoSyncToggle.Text = CONFIG.AUTO_SYNC and "ON" or "OFF"
-	autoSyncToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-	autoSyncToggle.TextSize = 11
-	autoSyncToggle.Font = Enum.Font.GothamBold
-	autoSyncToggle.Parent = autoSyncFrame
-	
-	local toggleCorner = Instance.new("UICorner")
-	toggleCorner.CornerRadius = UDim.new(0, 12)
-	toggleCorner.Parent = autoSyncToggle
-	
-	-- Sync interval
-	local intervalLabel = Instance.new("TextLabel")
-	intervalLabel.Size = UDim2.new(1, 0, 0, 20)
-	intervalLabel.BackgroundTransparency = 1
-	intervalLabel.Text = "Sync interval: " .. CONFIG.SYNC_INTERVAL .. "s"
-	intervalLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-	intervalLabel.TextSize = 11
-	intervalLabel.Font = Enum.Font.Gotham
-	intervalLabel.TextXAlignment = Enum.TextXAlignment.Left
-	intervalLabel.LayoutOrder = 9
-	intervalLabel.Parent = mainFrame
-	
-	-- Log area
+
+	autoSyncCheckbox.MouseButton1Click:Connect(function()
+		CONFIG.AUTO_SYNC = not CONFIG.AUTO_SYNC
+		autoSyncCheckbox.BackgroundColor3 = CONFIG.AUTO_SYNC and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+		autoSyncCheckbox.Text = CONFIG.AUTO_SYNC and "✓" or ""
+	end)
+
+	-- Use filters toggle
+	local filtersFrame = Instance.new("Frame")
+	filtersFrame.Size = UDim2.new(1, 0, 0, 26)
+	filtersFrame.BackgroundTransparency = 1
+	filtersFrame.LayoutOrder = 52
+	filtersFrame.Parent = scrollFrame
+
+	local filtersCheckbox = Instance.new("TextButton")
+	filtersCheckbox.Size = UDim2.new(0, 22, 0, 22)
+	filtersCheckbox.Position = UDim2.new(0, 0, 0.5, -11)
+	filtersCheckbox.BackgroundColor3 = CONFIG.USE_FILTERS and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+	filtersCheckbox.BorderSizePixel = 0
+	filtersCheckbox.Text = CONFIG.USE_FILTERS and "✓" or ""
+	filtersCheckbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	filtersCheckbox.TextSize = 14
+	filtersCheckbox.Font = Enum.Font.GothamBold
+	filtersCheckbox.Parent = filtersFrame
+
+	local filtersCorner = Instance.new("UICorner")
+	filtersCorner.CornerRadius = UDim.new(0, 4)
+	filtersCorner.Parent = filtersCheckbox
+
+	local filtersLabel = Instance.new("TextLabel")
+	filtersLabel.Size = UDim2.new(1, -30, 1, 0)
+	filtersLabel.Position = UDim2.new(0, 30, 0, 0)
+	filtersLabel.BackgroundTransparency = 1
+	filtersLabel.Text = "Filter non-code items"
+	filtersLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	filtersLabel.TextSize = 12
+	filtersLabel.Font = Enum.Font.Gotham
+	filtersLabel.TextXAlignment = Enum.TextXAlignment.Left
+	filtersLabel.Parent = filtersFrame
+
+	filtersCheckbox.MouseButton1Click:Connect(function()
+		CONFIG.USE_FILTERS = not CONFIG.USE_FILTERS
+		filtersCheckbox.BackgroundColor3 = CONFIG.USE_FILTERS and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(60, 60, 60)
+		filtersCheckbox.Text = CONFIG.USE_FILTERS and "✓" or ""
+	end)
+
+	-- ========================================
+	-- LOG AREA
+	-- ========================================
+
 	local logLabel = Instance.new("TextLabel")
 	logLabel.Size = UDim2.new(1, 0, 0, 20)
 	logLabel.BackgroundTransparency = 1
-	logLabel.Text = "Activity Log:"
+	logLabel.Text = "📋 Activity Log:"
 	logLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 	logLabel.TextSize = 11
-	logLabel.Font = Enum.Font.Gotham
+	logLabel.Font = Enum.Font.GothamBold
 	logLabel.TextXAlignment = Enum.TextXAlignment.Left
-	logLabel.LayoutOrder = 10
-	logLabel.Parent = mainFrame
-	
+	logLabel.LayoutOrder = 60
+	logLabel.Parent = scrollFrame
+
 	local logFrame = Instance.new("ScrollingFrame")
-	logFrame.Size = UDim2.new(1, 0, 1, -280)
+	logFrame.Size = UDim2.new(1, 0, 0, 100)
 	logFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	logFrame.BorderSizePixel = 0
-	logFrame.ScrollBarThickness = 6
+	logFrame.ScrollBarThickness = 4
 	logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-	logFrame.LayoutOrder = 11
-	logFrame.Parent = mainFrame
-	
+	logFrame.LayoutOrder = 61
+	logFrame.Parent = scrollFrame
+
 	local logCorner = Instance.new("UICorner")
 	logCorner.CornerRadius = UDim.new(0, 4)
 	logCorner.Parent = logFrame
-	
+
 	local logLayout = Instance.new("UIListLayout")
 	logLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	logLayout.Padding = UDim.new(0, 2)
 	logLayout.Parent = logFrame
-	
+
 	local logPadding = Instance.new("UIPadding")
-	logPadding.PaddingTop = UDim.new(0, 5)
-	logPadding.PaddingLeft = UDim.new(0, 5)
-	logPadding.PaddingRight = UDim.new(0, 5)
+	logPadding.PaddingTop = UDim.new(0, 4)
+	logPadding.PaddingLeft = UDim.new(0, 4)
+	logPadding.PaddingRight = UDim.new(0, 4)
 	logPadding.Parent = logFrame
-	
+
 	local logIndex = 0
-	
+
 	return {
 		statusDot = statusDot,
 		statusLabel = statusLabel,
@@ -327,8 +534,6 @@ local function createUI()
 		connectBtn = connectBtn,
 		syncBtn = syncBtn,
 		disconnectBtn = disconnectBtn,
-		autoSyncToggle = autoSyncToggle,
-		autoSyncLabel = autoSyncLabel,
 		logFrame = logFrame,
 		logIndex = function()
 			logIndex = logIndex + 1
@@ -342,33 +547,44 @@ local ui = createUI()
 -- Logging function
 local function log(message, color)
 	color = color or Color3.fromRGB(180, 180, 180)
-	
+
 	local entry = Instance.new("TextLabel")
 	entry.Size = UDim2.new(1, -10, 0, 0)
 	entry.AutomaticSize = Enum.AutomaticSize.Y
 	entry.BackgroundTransparency = 1
 	entry.Text = os.date("[%H:%M:%S] ") .. message
 	entry.TextColor3 = color
-	entry.TextSize = 10
+	entry.TextSize = 9
 	entry.Font = Enum.Font.Code
 	entry.TextXAlignment = Enum.TextXAlignment.Left
 	entry.TextWrapped = true
 	entry.LayoutOrder = ui.logIndex()
 	entry.Parent = ui.logFrame
-	
-	-- Auto-scroll to bottom
+
+	-- Auto-scroll
 	ui.logFrame.CanvasPosition = Vector2.new(0, ui.logFrame.AbsoluteCanvasSize.Y)
-	
+
 	print("[LiveDirectoryTree]", message)
 end
 
--- Update connection status UI
+-- Update connection status
 local function updateStatus(connected, message)
 	isConnected = connected
 	ui.statusDot.BackgroundColor3 = connected and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
 	ui.statusLabel.Text = message or (connected and "Connected" or "Disconnected")
 	ui.connectBtn.Text = connected and "✓ Connected" or "🔌 Connect"
 	ui.connectBtn.BackgroundColor3 = connected and Color3.fromRGB(60, 140, 60) or Color3.fromRGB(0, 120, 215)
+end
+
+-- Get list of enabled services
+local function getEnabledServices()
+	local services = {}
+	for _, svc in ipairs(ALL_SERVICES) do
+		if CONFIG.ENABLED_SERVICES[svc.name] then
+			table.insert(services, svc.service)
+		end
+	end
+	return services
 end
 
 -- Check if class should be skipped
@@ -393,11 +609,11 @@ local function shouldRecurse(instance)
 	return true
 end
 
--- Build tree data structure (JSON-friendly)
+-- Build tree data structure
 local function buildTreeNode(instance, depth)
 	if depth > 50 then return nil end
 	if shouldSkipClass(instance) then return nil end
-	
+
 	local node = {
 		name = instance.Name,
 		className = instance.ClassName,
@@ -405,8 +621,8 @@ local function buildTreeNode(instance, depth)
 		path = instance:GetFullName(),
 		children = {},
 	}
-	
-	-- Add script info if applicable
+
+	-- Add script line count
 	if instance:IsA("LuaSourceContainer") then
 		local success, lineCount = pcall(function()
 			local source = instance.Source
@@ -417,7 +633,7 @@ local function buildTreeNode(instance, depth)
 			node.lineCount = lineCount
 		end
 	end
-	
+
 	-- Recurse into children
 	if shouldRecurse(instance) then
 		local children = instance:GetChildren()
@@ -426,12 +642,12 @@ local function buildTreeNode(instance, depth)
 			local bIsFolder = b:IsA("Folder")
 			local aIsScript = a:IsA("LuaSourceContainer")
 			local bIsScript = b:IsA("LuaSourceContainer")
-			
+
 			if aIsFolder ~= bIsFolder then return aIsFolder end
 			if aIsScript ~= bIsScript then return aIsScript end
 			return a.Name < b.Name
 		end)
-		
+
 		for _, child in ipairs(children) do
 			local childNode = buildTreeNode(child, depth + 1)
 			if childNode then
@@ -439,22 +655,23 @@ local function buildTreeNode(instance, depth)
 			end
 		end
 	else
-		-- Show child count for shallow classes
 		node.childCount = #instance:GetChildren()
 	end
-	
+
 	return node
 end
 
--- Build full tree
+-- Build full tree from enabled services only
 local function buildFullTree()
+	local enabledServices = getEnabledServices()
+
 	local tree = {
 		name = game.Name ~= "" and game.Name or "Game",
 		timestamp = os.time(),
 		containers = {},
 	}
-	
-	for _, container in ipairs(CONFIG.SCAN_CONTAINERS) do
+
+	for _, container in ipairs(enabledServices) do
 		if container then
 			local containerNode = {
 				name = container.Name,
@@ -463,18 +680,18 @@ local function buildFullTree()
 				path = container:GetFullName(),
 				children = {},
 			}
-			
+
 			for _, child in ipairs(container:GetChildren()) do
 				local childNode = buildTreeNode(child, 1)
 				if childNode then
 					table.insert(containerNode.children, childNode)
 				end
 			end
-			
+
 			table.insert(tree.containers, containerNode)
 		end
 	end
-	
+
 	return tree
 end
 
@@ -484,17 +701,26 @@ local function syncToServer()
 		log("Not connected", Color3.fromRGB(255, 150, 100))
 		return false
 	end
-	
+
+	local enabledCount = 0
+	for _, enabled in pairs(CONFIG.ENABLED_SERVICES) do
+		if enabled then enabledCount = enabledCount + 1 end
+	end
+
+	if enabledCount == 0 then
+		log("No services selected!", Color3.fromRGB(255, 150, 100))
+		return false
+	end
+
 	local tree = buildFullTree()
 	local json = HttpService:JSONEncode(tree)
-	
+
 	-- Simple hash to detect changes
 	local hash = #json .. "-" .. (tree.timestamp or 0)
 	if hash == lastTreeHash then
-		-- No changes
 		return true
 	end
-	
+
 	local success, result = pcall(function()
 		return HttpService:PostAsync(
 			CONFIG.SERVER_URL .. "/sync",
@@ -503,10 +729,10 @@ local function syncToServer()
 			false
 		)
 	end)
-	
+
 	if success then
 		lastTreeHash = hash
-		log("Synced (" .. #json .. " bytes)", Color3.fromRGB(100, 255, 100))
+		log("Synced " .. enabledCount .. " services (" .. #json .. " bytes)", Color3.fromRGB(100, 255, 100))
 		return true
 	else
 		log("Sync failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
@@ -514,16 +740,16 @@ local function syncToServer()
 	end
 end
 
--- Test connection to server
+-- Test connection
 local function testConnection()
 	CONFIG.SERVER_URL = ui.urlInput.Text
-	
+
 	log("Connecting to " .. CONFIG.SERVER_URL .. "...")
-	
+
 	local success, result = pcall(function()
 		return HttpService:GetAsync(CONFIG.SERVER_URL .. "/ping")
 	end)
-	
+
 	if success then
 		local data = HttpService:JSONDecode(result)
 		if data.status == "ok" then
@@ -532,48 +758,48 @@ local function testConnection()
 			return true
 		end
 	end
-	
+
 	updateStatus(false, "Connection failed")
 	log("Failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
 	return false
 end
 
--- Setup change listeners
+-- Setup change listeners for enabled services only
 local function setupChangeListeners()
 	-- Clean up old connections
 	for _, conn in ipairs(changeConnections) do
 		conn:Disconnect()
 	end
 	changeConnections = {}
-	
+
 	local function onChanged()
 		if CONFIG.AUTO_SYNC and isConnected then
 			task.defer(syncToServer)
 		end
 	end
-	
-	-- Listen to each container
-	for _, container in ipairs(CONFIG.SCAN_CONTAINERS) do
-		if container then
-			table.insert(changeConnections, container.DescendantAdded:Connect(function(desc)
+
+	-- Listen to enabled services only
+	for _, svc in ipairs(ALL_SERVICES) do
+		if CONFIG.ENABLED_SERVICES[svc.name] and svc.service then
+			table.insert(changeConnections, svc.service.DescendantAdded:Connect(function(desc)
 				log("+ " .. desc.Name, Color3.fromRGB(100, 200, 100))
 				onChanged()
 			end))
-			
-			table.insert(changeConnections, container.DescendantRemoving:Connect(function(desc)
+
+			table.insert(changeConnections, svc.service.DescendantRemoving:Connect(function(desc)
 				log("- " .. desc.Name, Color3.fromRGB(200, 100, 100))
 				onChanged()
 			end))
 		end
 	end
-	
-	log("Change listeners active", Color3.fromRGB(150, 150, 255))
+
+	log("Watching " .. #changeConnections / 2 .. " services", Color3.fromRGB(150, 150, 255))
 end
 
 -- Start sync loop
 local function startSyncLoop()
 	if syncLoop then return end
-	
+
 	syncLoop = task.spawn(function()
 		while isConnected do
 			task.wait(CONFIG.SYNC_INTERVAL)
@@ -597,7 +823,7 @@ local function connect()
 	if testConnection() then
 		setupChangeListeners()
 		startSyncLoop()
-		syncToServer() -- Initial sync
+		syncToServer()
 	end
 end
 
@@ -615,7 +841,6 @@ end
 -- UI Event Handlers
 ui.connectBtn.MouseButton1Click:Connect(function()
 	if isConnected then
-		-- Already connected, do nothing or reconnect
 		syncToServer()
 	else
 		connect()
@@ -635,13 +860,6 @@ ui.disconnectBtn.MouseButton1Click:Connect(function()
 	disconnect()
 end)
 
-ui.autoSyncToggle.MouseButton1Click:Connect(function()
-	CONFIG.AUTO_SYNC = not CONFIG.AUTO_SYNC
-	ui.autoSyncToggle.Text = CONFIG.AUTO_SYNC and "ON" or "OFF"
-	ui.autoSyncToggle.BackgroundColor3 = CONFIG.AUTO_SYNC and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(100, 100, 100)
-	log("Auto-sync: " .. (CONFIG.AUTO_SYNC and "enabled" or "disabled"))
-end)
-
 ui.urlInput.FocusLost:Connect(function(enterPressed)
 	CONFIG.SERVER_URL = ui.urlInput.Text
 	if enterPressed and not isConnected then
@@ -649,7 +867,7 @@ ui.urlInput.FocusLost:Connect(function(enterPressed)
 	end
 end)
 
--- Toolbar button handlers
+-- Toolbar handlers
 connectButton.Click:Connect(function()
 	widget.Enabled = true
 	if not isConnected then
@@ -663,11 +881,11 @@ syncButton.Click:Connect(function()
 		syncToServer()
 	else
 		widget.Enabled = true
-		log("Connect to server first", Color3.fromRGB(255, 200, 100))
+		log("Connect first", Color3.fromRGB(255, 200, 100))
 	end
 end)
 
 -- Initialize
 widget.Enabled = false
-log("Plugin loaded. Click Connect to start.", Color3.fromRGB(150, 200, 255))
-print("[LiveDirectoryTree] Plugin loaded! Click the toolbar button to open.")
+log("Plugin loaded. Select services and connect!", Color3.fromRGB(150, 200, 255))
+print("[LiveDirectoryTree] Plugin loaded!")
