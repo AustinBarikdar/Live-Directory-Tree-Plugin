@@ -454,74 +454,98 @@ function activate(context) {
         }
     });
 
-    // Auto-setup MCP for Claude Desktop
+    // Auto-setup MCP for Claude Desktop and Claude Code
     const setupMCPCmd = vscode.commands.registerCommand('robloxDirectoryTree.setupMCP', async () => {
         const os = process.platform;
         const path = require('path');
         const fs = require('fs');
 
-        // Find Claude Desktop config path
-        let configPath;
-        if (os === 'win32') {
-            configPath = path.join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json');
-        } else if (os === 'darwin') {
-            configPath = path.join(process.env.HOME, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
-        } else {
-            configPath = path.join(process.env.HOME, '.config', 'Claude', 'claude_desktop_config.json');
-        }
-
         // Get the MCP server script path
         const mcpServerPath = path.join(__dirname, 'mcp-server.js');
+        const mcpEntry = { command: 'node', args: [mcpServerPath] };
 
-        try {
-            // Read existing config or create new
-            let config = { mcpServers: {} };
+        // Ask user which service(s) to configure
+        const selection = await vscode.window.showQuickPick(
+            [
+                { label: 'Both (Recommended)', value: 'both', description: 'Configure Claude Desktop and Claude Code' },
+                { label: 'Claude Desktop', value: 'desktop', description: 'Claude Desktop app' },
+                { label: 'Claude Code', value: 'code', description: 'Claude Code CLI' },
+            ],
+            { placeHolder: 'Which Claude service(s) to configure?' }
+        );
 
-            // Create directory if it doesn't exist
-            const configDir = path.dirname(configPath);
-            if (!fs.existsSync(configDir)) {
-                fs.mkdirSync(configDir, { recursive: true });
+        if (!selection) return;
+
+        const results = [];
+
+        // --- Claude Desktop config ---
+        if (selection.value === 'both' || selection.value === 'desktop') {
+            let configPath;
+            if (os === 'win32') {
+                configPath = path.join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json');
+            } else if (os === 'darwin') {
+                configPath = path.join(process.env.HOME, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+            } else {
+                configPath = path.join(process.env.HOME, '.config', 'Claude', 'claude_desktop_config.json');
             }
 
-            // Read existing config if it exists
-            if (fs.existsSync(configPath)) {
-                try {
-                    const existing = fs.readFileSync(configPath, 'utf8');
-                    config = JSON.parse(existing);
-                    if (!config.mcpServers) {
-                        config.mcpServers = {};
-                    }
-                } catch (e) {
-                    // If JSON is invalid, backup and start fresh
-                    const backupPath = configPath + '.backup';
-                    fs.copyFileSync(configPath, backupPath);
-                    vscode.window.showWarningMessage(`Backed up invalid config to ${backupPath}`);
+            try {
+                let config = { mcpServers: {} };
+                const configDir = path.dirname(configPath);
+                if (!fs.existsSync(configDir)) {
+                    fs.mkdirSync(configDir, { recursive: true });
                 }
+                if (fs.existsSync(configPath)) {
+                    try {
+                        const existing = fs.readFileSync(configPath, 'utf8');
+                        config = JSON.parse(existing);
+                        if (!config.mcpServers) config.mcpServers = {};
+                    } catch (e) {
+                        const backupPath = configPath + '.backup';
+                        fs.copyFileSync(configPath, backupPath);
+                        vscode.window.showWarningMessage(`Backed up invalid config to ${backupPath}`);
+                    }
+                }
+                config.mcpServers['roblox-directory-tree'] = mcpEntry;
+                fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+                results.push('Claude Desktop');
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to setup Claude Desktop MCP: ${error.message}`);
             }
+        }
 
-            // Add our MCP server
-            config.mcpServers['roblox-directory-tree'] = {
-                command: 'node',
-                args: [mcpServerPath]
-            };
+        // --- Claude Code config (.mcp.json in home directory) ---
+        if (selection.value === 'both' || selection.value === 'code') {
+            const homedir = os === 'win32' ? process.env.USERPROFILE : process.env.HOME;
+            const mcpJsonPath = path.join(homedir, '.mcp.json');
 
-            // Write config
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            try {
+                let config = { mcpServers: {} };
+                if (fs.existsSync(mcpJsonPath)) {
+                    try {
+                        const existing = fs.readFileSync(mcpJsonPath, 'utf8');
+                        config = JSON.parse(existing);
+                        if (!config.mcpServers) config.mcpServers = {};
+                    } catch (e) {
+                        const backupPath = mcpJsonPath + '.backup';
+                        fs.copyFileSync(mcpJsonPath, backupPath);
+                        vscode.window.showWarningMessage(`Backed up invalid .mcp.json to ${backupPath}`);
+                    }
+                }
+                config.mcpServers['roblox-directory-tree'] = mcpEntry;
+                fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2));
+                results.push('Claude Code');
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to setup Claude Code MCP: ${error.message}`);
+            }
+        }
 
-            // Show success message
-            const restart = await vscode.window.showInformationMessage(
-                '✅ Claude Desktop configured! Restart Claude Desktop to enable.',
-                'Open Config File',
+        if (results.length > 0) {
+            const msg = results.join(' and ') + ' configured! Restart to enable.';
+            const action = await vscode.window.showInformationMessage(
+                msg,
                 'OK'
             );
-
-            if (restart === 'Open Config File') {
-                const doc = await vscode.workspace.openTextDocument(configPath);
-                await vscode.window.showTextDocument(doc);
-            }
-
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to setup MCP: ${error.message}`);
         }
     });
 

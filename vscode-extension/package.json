@@ -2,7 +2,7 @@
   "name": "roblox-live-directory-tree",
   "displayName": "Roblox Live Directory Tree",
   "description": "Live view of your Roblox project structure synced from Studio",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "AverageBum",
   "repository": {
     "type": "git",
@@ -13,6 +13,7 @@
     "url": "https://github.com/AustinBarikdar/Live-Directory-Tree-Rojo-Plugin/issues"
   },
   "license": "MIT",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -77,7 +78,7 @@
       },
       {
         "command": "robloxDirectoryTree.setupMCP",
-        "title": "Setup Claude Desktop Integration",
+        "title": "Setup Claude Integration",
         "icon": "$(sparkle)"
       }
     ],
